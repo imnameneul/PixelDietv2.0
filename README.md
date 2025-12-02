@@ -1,4 +1,4 @@
-> 📢 ChatGPT에서 복붙한 설명인데 참고용으로 올립니다... (이대로 안 하셔도 됨)
+> 📢 ChatGPT에서 복붙한 설명인데 참고용으로 올립니다... 이대로 안 하셔도 됩니다.
 
 # 1. Repository 역할 개요
 
@@ -68,7 +68,7 @@ appUsageList
 
   - 오늘 사용시간은 여전히 UsageStats 기반으로 계산하되,
 
-  - goalTime, streak 계산 시 DB에 저장된 목표/히스토리를 활용할 수 있음. (히스토리: 4번 항목 참고)
+  - goalTime, streak 계산 시 DB에 저장된 목표/히스토리를 활용할 수 있음. (히스토리는 4번 항목 참고)
 
   - ViewModel/UI에서 observe 방식은 그대로 유지.
 
@@ -329,268 +329,264 @@ Worker에서 사용할 수 있는 Repository API도 같이 고려.
 
 현재 코드에서는:
 
-목표시간(goalTime)
+- 목표시간(goalTime)
+  - AppUsage.goalTime은 항상 “현재 설정된 목표시간”을 기준으로 계산됨
 
-AppUsage.goalTime은 항상 “현재 설정된 목표시간”을 기준으로 계산됨
+  - 캘린더/그래프/스트릭 계산 시에도 현재 goalTime을 사용
 
-캘린더/그래프/스트릭 계산 시에도 현재 goalTime을 사용
+- 추적 앱 목록(trackedPackages)
 
-추적 앱 목록(trackedPackages)
+  - 과거에 어떤 앱을 추적하고 있었는지에 대한 기록은 없음
 
-과거에 어떤 앱을 추적하고 있었는지에 대한 기록은 없음
-
-통계 조회 시 “지금 추적 중인 앱” 기준으로 과거 사용량을 재해석
+  - 통계 조회 시 “지금 추적 중인 앱” 기준으로 과거 사용량을 재해석
 
 이 구조의 문제점:
 
-과거 목표시간이 보존되지 않음
+1. 과거 목표시간이 보존되지 않음
 
-예: 6/1~6/10은 목표 60분, 6/11부터 120분으로 올렸다고 해도
+  - 예: 6/1~6/10은 목표 60분, 6/11부터 120분으로 올렸다고 해도
 → 캘린더/그래프/스트릭 계산은 “항상 현재 목표(120분)”로 과거까지 재평가됨
 
-즉, “그 당시 기준으로 목표를 얼마나 잘 지켰는지”를 다시 볼 수 없음
+- 즉, “그 당시 기준으로 목표를 얼마나 잘 지켰는지”를 다시 볼 수 없음
 
-과거 추적 앱 상태를 재현할 수 없음
+2. 과거 추적 앱 상태를 재현할 수 없음
 
-예: 6/1~6/15는 인스타+유튜브를 추적하다가
+- 예: 6/1~6/15는 인스타+유튜브를 추적하다가
 6/16부터는 인스타만 추적하도록 바꿨을 때,
 → 6/5 기준 통계를 보고 싶어도,
 실제로 그때 어떤 앱들을 “추적 대상으로 보고 있었는지” 복원할 수 없음
 
-과거 통계 화면이 “지금 추적앱 기준”으로만 계산됨
+- 과거 통계 화면이 “지금 추적앱 기준”으로만 계산됨
 
-결과적으로,
+3. 결과적으로,
 
-캘린더 색깔(SUCCESS/WARNING/FAIL)
+- 캘린더 색깔(SUCCESS/WARNING/FAIL)
 
-월별 그래프
+- 월별 그래프
 
-스트릭(🔥/💀)
+- 스트릭(🔥/💀)
 이 모든 통계가 **“과거 당시 상태”가 아니라 “현재 설정을 이용해 재계산된 값”**이 된다.
 
-→ 따라서, **“과거 상태를 그대로 재현하는 통계/캘린더”**를 만들기 위해서는
+> → 따라서, **“과거 상태를 그대로 재현하는 통계/캘린더”**를 만들기 위해서는
 목표시간 / 추적앱 설정의 히스토리를 날짜 기준으로 저장할 수 있는 구조가 필요하다.
 
-4.2 필요한 히스토리의 종류
+## 4.2 필요한 히스토리의 종류
 
 DB 레이어에서 새로 도입해야 하는 히스토리는 크게 두 가지다.
 
-(1) 목표시간 히스토리 (GoalHistory)
+### (1) 목표시간 히스토리 (GoalHistory)
 
 목적:
 
-“특정 날짜에, 특정 앱의 목표시간이 얼마였는지”를 복원하기 위함
+- “특정 날짜에, 특정 앱의 목표시간이 얼마였는지”를 복원하기 위함
 
-전체 목표시간(선택된 앱들의 총 목표)과, 개별 앱 목표시간 모두 포함 가능
+- 전체 목표시간(선택된 앱들의 총 목표)과, 개별 앱 목표시간 모두 포함 가능
 
 필요 필드 (요구사항 수준):
 
-effectiveDate: String
+- effectiveDate: String
 
-"YYYY-MM-DD" 형식
+  - "YYYY-MM-DD" 형식
 
-이 날짜부터 이후로 목표가 적용된다는 의미
+  - 이 날짜부터 이후로 목표가 적용된다는 의미
 
-packageName: String?
+- packageName: String?
 
-null이면 “전체 목표시간”을 의미
+  - null이면 “전체 목표시간”을 의미
 
-null이 아니면 특정 앱(packageName)의 목표
+  - null이 아니면 특정 앱(packageName)의 목표
 
-goalMinutes: Int
+- goalMinutes: Int
 
-분 단위 목표시간
+  - 분 단위 목표시간
 
 예시 시나리오:
 
-2025-06-01: 전체 목표 180분
+- 2025-06-01: 전체 목표 180분
 
-2025-06-05: 인스타그램 목표 60분
+- 2025-06-05: 인스타그램 목표 60분
 
-2025-06-10: 인스타그램 목표 120분으로 상향
+- 2025-06-10: 인스타그램 목표 120분으로 상향
 
 이 경우:
 
-6/01~6/09: 인스타 목표 60분으로 평가
+- 6/01~6/09: 인스타 목표 60분으로 평가
 
-6/10 이후: 인스타 목표 120분으로 평가
+- 6/10 이후: 인스타 목표 120분으로 평가
 
-캘린더/그래프/스트릭 계산 시,
+- 캘린더/그래프/스트릭 계산 시,
 각 날짜별로 해당 날짜보다 과거의 GoalHistory 중 가장 마지막 기록을 찾아서 사용해야 함.
 
-(2) 추적 앱 히스토리 (TrackingHistory)
+---
+### (2) 추적 앱 히스토리 (TrackingHistory)
 
 목적:
 
-“특정 날짜에, 사용자가 어떤 앱들을 ‘추적 대상으로 설정’했는지”를 복원하기 위함
+- “특정 날짜에, 사용자가 어떤 앱들을 ‘추적 대상으로 설정’했는지”를 복원하기 위함
 
 필요 필드 (요구사항 수준):
 
-effectiveDate: String
+- effectiveDate: String
 
-"YYYY-MM-DD" 형식
+  - "YYYY-MM-DD" 형식
 
-이 날짜부터 이후로 해당 설정이 적용
+  - 이 날짜부터 이후로 해당 설정이 적용
 
-trackedPackages: List<String>
+- trackedPackages: List<String>
 
-또는 N:M 구조로 쪼개서 설계해도 무방 (예: 별도 relation 테이블)
+  - 또는 N:M 구조로 쪼개서 설계해도 무방 (예: 별도 relation 테이블)
 
 예시 시나리오:
 
-2025-06-01: 추적앱 = [네이버웹툰, 인스타그램]
+- 2025-06-01: 추적앱 = [네이버웹툰, 인스타그램]
 
-2025-06-15: 추적앱 = [인스타그램]
+- 2025-06-15: 추적앱 = [인스타그램]
 
 이 경우:
 
-6/01~6/14: 통계/캘린더/그래프/스트릭은 네이버웹툰+인스타그램 기준
+- 6/01~6/14: 통계/캘린더/그래프/스트릭은 네이버웹툰+인스타그램 기준
 
-6/15 이후: 인스타그램 기준
+- 6/15 이후: 인스타그램 기준
 
 캘린더/그래프 계산 시에는 각 날짜에 대해:
 
-해당 날짜보다 과거의 TrackingHistory 중 가장 마지막 기록을 찾아서
+- 해당 날짜보다 과거의 TrackingHistory 중 가장 마지막 기록을 찾아서
 **그 날의 “유효한 tracked 앱 목록”**으로 사용.
 
-4.3 히스토리 구조를 사용한 조회 요구사항
+---
+
+## 4.3 히스토리 구조를 사용한 조회 요구사항
 
 DB에 히스토리를 저장해두면, Repository/Domain 레벨에서는 아래와 같은 조회를 지원할 수 있어야 한다.
 
-(A) 캘린더 하루 색칠 (SUCCESS/WARNING/FAIL)
+### (A) 캘린더 하루 색칠 (SUCCESS/WARNING/FAIL)
 
 입력:
 
-targetDate: String (YYYY-MM-DD)
+- targetDate: String (YYYY-MM-DD)
 
-selectedFilter: String?
+- selectedFilter: String?
 
-null이면 “전체 보기”
+  - null이면 “전체 보기”
 
-아니면 특정 앱(packageName)
+  - 아니면 특정 앱(packageName)
 
 필요 조회(Repository 내부):
 
-해당 날짜의 사용 시간
+#### 1. 해당 날짜의 사용 시간
 
-DailyUsage에서:
+- DailyUsage에서:
 
-전체 보기 → trackedApps 기준으로 일별 합산
+  - 전체 보기 → trackedApps 기준으로 일별 합산
 
-앱별 보기 → 해당 packageName 사용시간
+  - 앱별 보기 → 해당 packageName 사용시간
 
-해당 날짜의 목표시간
+#### 2. 해당 날짜의 목표시간
 
-전체 보기:
+- 전체 보기:
 
-GoalHistory에서 packageName = null (전체) 기준으로
+  - GoalHistory에서 packageName = null (전체) 기준으로
 effectiveDate <= targetDate 인 기록 중 가장 최신 기록
 
-앱별 보기:
+  - 앱별 보기:
 
-GoalHistory에서 해당 packageName 기준으로
+    - GoalHistory에서 해당 packageName 기준으로
 마찬가지로 가장 최신 기록
 
-(전체 보기일 경우) 해당 날짜의 추적앱 목록
+#### 3. (전체 보기일 경우) 해당 날짜의 추적앱 목록
 
-TrackingHistory에서 effectiveDate <= targetDate 중 가장 최신 기록
+- TrackingHistory에서 effectiveDate <= targetDate 중 가장 최신 기록
 
-이 리스트에 포함된 앱만 합산하여 사용시간 계산
+- 이 리스트에 포함된 앱만 합산하여 사용시간 계산
 
 위 데이터를 기반으로:
 
-usage / goal 비율에 따라 DayStatus 결정
+- usage / goal 비율에 따라 DayStatus 결정
 
-usage > goal → FAIL
+  - usage > goal → FAIL
 
-usage > goal * 0.7 → WARNING
+  - usage > goal * 0.7 → WARNING
 
-나머지 → SUCCESS
+  - 나머지 → SUCCESS
+ 
+---
 
-(B) 월별 그래프 (이번 달 사용시간 + 목표선)
+### (B) 월별 그래프 (이번 달 사용시간 + 목표선)
 
 입력:
 
-year, month
+- year, month
 
-selectedFilter: String?
+- selectedFilter: String?
 
 필요 조회:
 
-해당 월의 모든 날짜에 대해:
+- 해당 월의 모든 날짜에 대해:
 
-DailyUsage에서 하루 사용량
+1. DailyUsage에서 하루 사용량
 
-그 날짜에 유효한 목표시간 (GoalHistory)
+2. 그 날짜에 유효한 목표시간 (GoalHistory)
 
-(전체 보기일 경우) 그 날짜에 유효한 추적앱 목록 (TrackingHistory)
+3. (전체 보기일 경우) 그 날짜에 유효한 추적앱 목록 (TrackingHistory)
 
 그래프:
 
-X축: 일(dayOfMonth)
+- X축: 일(dayOfMonth)
 
-Y축: 사용시간(분)
+- Y축: 사용시간(분)
 
-목표선: 해당 월에 대해 “기준이 되는 목표”
+- 목표선: 해당 월에 대해 “기준이 되는 목표”
 
-현재 구현에서는 “현재 목표”를 쓰고 있으나,
+  - 현재 구현에서는 “현재 목표”를 쓰고 있으나,
 향후에는 “해당 월 평균 목표” 등으로 확장 가능
 
-(C) 스트릭(streak) 계산
+---
+
+### (C) 스트릭(streak) 계산
 
 입력:
 
-dailyUsageList (과거 N일)
+- dailyUsageList (과거 N일)
 
-히스토리:
+- 히스토리:
 
-GoalHistory
+  - GoalHistory
 
-TrackingHistory (필요시)
+  - TrackingHistory (필요시)
 
 현재 calculateStreaks() 함수는:
 
-각 날짜에서 goal을 현재값으로 평가하고 있음
+- 각 날짜에서 goal을 현재값으로 평가하고 있음
 
-히스토리 도입 후에는:
+- 히스토리 도입 후에는:
 
-각 날짜마다 “그 날짜의 goal”을 GoalHistory에서 찾아서 계산해야 함
+  - 각 날짜마다 “그 날짜의 goal”을 GoalHistory에서 찾아서 계산해야 함
 
-필요하다면 “그 날짜에 추적 대상이었는지 여부”도 TrackingHistory 기준으로 판단 가능
+  - 필요하다면 “그 날짜에 추적 대상이었는지 여부”도 TrackingHistory 기준으로 판단 가능
 
-⚠ streak 계산 자체는 여전히 Repository/Domain 레벨에서 수행되며,
+> ⚠ streak 계산 자체는 여전히 Repository/Domain 레벨에서 수행되며,
 DB 담당자는 “해당 날짜의 goal / trackedApps를 가져올 수 있는 DAO/쿼리”를 제공해주면 된다.
+---
+## 4.4 히스토리는 현재 코드에 없는 부분이며, DB 쪽에서 도입만 해두면 됨
 
-4.4 히스토리는 현재 코드에 없는 부분이며, DB 쪽에서 도입만 해두면 됨
+- 현재 코드 상태
+  - 목표시간 히스토리 / 추적앱 히스토리 테이블은 존재하지 않음
 
-현재 코드 상태
+  - 모든 통계는 “현재 설정값” 기준으로 과거를 재계산하는 구조
 
-목표시간 히스토리 / 추적앱 히스토리 테이블은 존재하지 않음
+- DB 담당자의 역할
 
-모든 통계는 “현재 설정값” 기준으로 과거를 재계산하는 구조
-
-DB 담당자의 역할
-
-위에서 설명한 GoalHistory, TrackingHistory 개념을
+  - 위에서 설명한 GoalHistory, TrackingHistory 개념을
 Room Entity / DAO / Firestore 컬렉션 형태로 도입해두기
 
-“effectiveDate 기준으로, 해당 날짜에 유효한 기록을 가져올 수 있는 쿼리”를 지원
+  - “effectiveDate 기준으로, 해당 날짜에 유효한 기록을 가져올 수 있는 쿼리”를 지원
 
-앱 로직(ViewModel/Repository)은 이후에 살을 붙일 예정
+- 앱 로직(ViewModel/Repository)은 이후에 살을 붙일 예정
 
-히스토리를 언제 insert할지:
+- 히스토리를 언제 insert할지:
 
-목표를 변경할 때?
+  - 목표를 변경할 때?
 
-자정에 하루를 마감할 때?
+  - 자정에 하루를 마감할 때?
 
-히스토리를 어떻게 조합해서 캘린더/그래프/스트릭에 반영할지:
-
-이 부분은 현재 Repository/ViewModel 담당자가 구현
-
-즉,
-
-지금 단계에서 DB 담당자는
-**“히스토리를 저장·조회할 수 있는 최소한의 구조(엔티티/DAO/컬렉션/쿼리)”**를 준비해두면 되고,
-실제로 그 데이터를 활용해서 통계를 재구성하는 비즈니스 로직은
-이후에 Repository/ViewModel 쪽에서 점진적으로 붙여갈 계획이다.
+- 히스토리를 어떻게 조합해서 캘린더/그래프/스트릭에 반영할지: Repository/ViewModel 담당자가 구현

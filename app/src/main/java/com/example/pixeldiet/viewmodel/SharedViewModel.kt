@@ -37,15 +37,43 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
     // ❗ AppName 대신 packageName(String?)으로 필터 (null = 전체)
     private val _selectedFilter = MutableLiveData<String?>(null)
 
+    // 🔹 캘린더/그래프에서 쓸 현재 필터 라벨("전체" / 앱 이름)
+    val selectedFilterText: LiveData<String> = MediatorLiveData<String>().apply {
+
+        fun update() {
+            val pkg = _selectedFilter.value
+            val list = appUsageList.value ?: emptyList()
+
+            value = if (pkg == null) {
+                // 전체 보기
+                "전체"
+            } else {
+                // packageName에 해당하는 앱 찾기 → appLabel 사용
+                list.find { it.packageName == pkg }?.appLabel ?: "전체"
+            }
+        }
+
+        addSource(_selectedFilter) { update() }
+        addSource(appUsageList) { update() }   // 앱 리스트가 바뀌어도 라벨 갱신
+    }
+
     // ----------------------- 추적 앱 목록 -----------------------
 
     // SharedPreferences (어떤 앱을 추적 중인지 저장)
     private val trackedPrefs = application
         .getSharedPreferences("tracked_apps_prefs", Context.MODE_PRIVATE)
 
+    // 🔹 전체 목표시간 저장용 SharedPreferences
+    private val goalPrefs = application
+        .getSharedPreferences("goal_prefs", Context.MODE_PRIVATE)
+
     // 현재 추적 중인 앱들의 packageName 집합
     private val _trackedPackages = MutableLiveData<Set<String>>(emptySet())
     val trackedPackages: LiveData<Set<String>> = _trackedPackages
+
+    // 🔹 전체 목표시간 (분). null 이면 "앱별 목표 합산" 사용
+    private val _overallGoalMinutes = MutableLiveData<Int?>(null)
+    val overallGoalMinutes: LiveData<Int?> = _overallGoalMinutes
 
     private fun loadTrackedPackages() {
         val saved = trackedPrefs.getStringSet("tracked_packages", emptySet()) ?: emptySet()
@@ -55,7 +83,27 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
     fun updateTrackedPackages(newSet: Set<String>) {
         _trackedPackages.value = newSet
         trackedPrefs.edit().putStringSet("tracked_packages", newSet).apply()
+
+        // ✅ 선택앱 기준으로 다시 사용시간/스트릭 계산
+        refreshData()
     }
+
+    private fun loadOverallGoal() {
+        val saved = goalPrefs.getInt("overall_goal_minutes", -1)
+        _overallGoalMinutes.value = if (saved >= 0) saved else null
+    }
+
+    fun setOverallGoal(minutes: Int?) {
+        _overallGoalMinutes.value = minutes
+        goalPrefs.edit().apply {
+            if (minutes == null) {
+                remove("overall_goal_minutes")
+            } else {
+                putInt("overall_goal_minutes", minutes)
+            }
+        }.apply()
+    }
+
 
     // ----------------------- Firebase Auth -----------------------
 
@@ -72,6 +120,7 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
     init {
         auth.addAuthStateListener(authListener)
         loadTrackedPackages()   // ⭐ 저장돼 있던 추적앱 목록 로드
+        loadOverallGoal()      // 🔹 전체 목표시간 로드
         refreshData()           // ⭐ 사용시간 데이터 로드
     }
 
@@ -121,41 +170,58 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
 
                 // 🔹 추적앱이 없으면 총 사용시간/목표 0으로
                 val filtered = if (tracked.isEmpty()) {
-                    emptyList<com.example.pixeldiet.model.AppUsage>()
+                    emptyList<AppUsage>()
                 } else {
                     // 🔹 선택한 앱들만 합산
                     list.filter { it.packageName in tracked }
                 }
 
                 val totalUsage = filtered.sumOf { it.currentUsage }
-                val totalGoal = filtered.sumOf { it.goalTime }
+                val autoGoal = filtered.sumOf { it.goalTime }
 
-                value = totalUsage to totalGoal
+                // 🔹 전체 목표시간이 설정되어 있으면 그걸 사용, 없으면 기존처럼 합산 사용
+                val goal = _overallGoalMinutes.value ?: autoGoal
+
+                value = totalUsage to goal
             }
 
             addSource(appUsageList) { update() }
             addSource(trackedPackages) { update() }
+            addSource(overallGoalMinutes) { update() }   // 🔹 전체 목표 변경 시 재계산
         }
-
 
     private val filteredGoalTime: LiveData<Int> = MediatorLiveData<Int>().apply {
-        addSource(appUsageList) { goals ->
+
+        fun update() {
+            val goals = appUsageList.value ?: emptyList()
             val filterPkg = _selectedFilter.value
+            val tracked = trackedPackages.value ?: emptySet()
+
             value = if (filterPkg == null) {
-                goals.sumOf { it.goalTime }
+                // 🔹 전체보기: 추적 앱들의 목표 합 기준 + 전체 목표시간 우선
+                val autoGoal =
+                    if (tracked.isEmpty()) {
+                        goals.sumOf { it.goalTime }
+                    } else {
+                        goals.filter { it.packageName in tracked }
+                            .sumOf { it.goalTime }
+                    }
+
+                _overallGoalMinutes.value ?: autoGoal
             } else {
+                // 🔹 특정 앱 보기: 해당 앱의 목표시간만
                 goals.find { it.packageName == filterPkg }?.goalTime ?: 0
             }
         }
-        addSource(_selectedFilter) { filterPkg ->
-            val goals = appUsageList.value ?: return@addSource
-            value = if (filterPkg == null) {
-                goals.sumOf { it.goalTime }
-            } else {
-                goals.find { it.packageName == filterPkg }?.goalTime ?: 0
-            }
-        }
+
+        addSource(appUsageList) { update() }
+        addSource(_selectedFilter) { update() }
+        addSource(overallGoalMinutes) { update() }
+        addSource(trackedPackages) { update() }   // 🔹 추적앱 바뀌면 목표도 재계산
     }
+
+    // 캘린더/그래프에서 쓸 현재 필터의 목표시간(분)
+    val calendarGoalTime: LiveData<Int> = filteredGoalTime
 
     val calendarDecoratorData: LiveData<List<CalendarDecoratorData>> =
         MediatorLiveData<List<CalendarDecoratorData>>().apply {
@@ -163,6 +229,7 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
                 val goals = appUsageList.value ?: return
                 val dailies = dailyUsageList.value ?: return
                 val filterPkg = _selectedFilter.value
+                val tracked = trackedPackages.value ?: emptySet()
                 val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.KOREAN)
                 val decorators = mutableListOf<CalendarDecoratorData>()
 
@@ -176,18 +243,27 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
                     )
 
                     val (usage, goal) = if (filterPkg == null) {
-                        Pair(
-                            daily.appUsages.values.sum(),
-                            goals.sumOf { it.goalTime }
-                        )
+                        // ✅ 전체보기: "추적 앱들"의 총 사용시간 + 전체 목표시간 기준
+                        val dayUsage = daily.appUsages
+                            .filterKeys { pkg -> tracked.isEmpty() || pkg in tracked }
+                            .values
+                            .sum()
+
+                        val autoGoal = goals
+                            .filter { tracked.isEmpty() || it.packageName in tracked }
+                            .sumOf { it.goalTime }
+
+                        val totalGoal = _overallGoalMinutes.value ?: autoGoal
+
+                        dayUsage to totalGoal
                     } else {
-                        Pair(
-                            daily.appUsages[filterPkg] ?: 0,
-                            goals.find { it.packageName == filterPkg }?.goalTime ?: 0
-                        )
+                        // ✅ 특정 앱 보기: 해당 앱만
+                        val dayUsage = daily.appUsages[filterPkg] ?: 0
+                        val appGoal = goals.find { it.packageName == filterPkg }?.goalTime ?: 0
+                        dayUsage to appGoal
                     }
 
-                    if (goal == 0) continue
+                    if (goal <= 0) continue
 
                     val status = when {
                         usage > goal -> DayStatus.FAIL
@@ -202,27 +278,89 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
             addSource(dailyUsageList) { updateDecorators() }
             addSource(filteredGoalTime) { updateDecorators() }
             addSource(_selectedFilter) { updateDecorators() }
+            addSource(overallGoalMinutes) { updateDecorators() }
+            addSource(trackedPackages) { updateDecorators() }   // 🔹 추적앱 바뀔 때 갱신
         }
 
+
+    // 선택된 달 (1~12), 기본값 = 현재 달
+    private val _selectedMonth = MutableLiveData<Int>(
+        Calendar.getInstance().get(Calendar.MONTH) + 1
+    )
+    val selectedMonth: LiveData<Int> = _selectedMonth
+
+    // 캘린더에서 월이 바뀔 때 호출할 함수
+    fun setSelectedMonth(year: Int, month: Int) {
+        // month는 1~12 기준으로 받는다고 가정
+        _selectedMonth.value = month
+    }
+
     val calendarStatsText: LiveData<String> = MediatorLiveData<String>().apply {
-        addSource(calendarDecoratorData) { decorators ->
-            val currentMonth = Calendar.getInstance().get(Calendar.MONTH) + 1
+
+        fun updateText() {
+            val decorators = calendarDecoratorData.value ?: emptyList()
+            val month = selectedMonth.value ?: (Calendar.getInstance().get(Calendar.MONTH) + 1)
+
             val successDays = decorators.count {
-                it.date.month == currentMonth &&
+                it.date.month == month &&
                         (it.status == DayStatus.SUCCESS || it.status == DayStatus.WARNING)
             }
 
             val filterPkg = _selectedFilter.value
-            val filterName = if (filterPkg == null) {
-                "전체"
-            } else {
-                appUsageList.value
-                    ?.find { it.packageName == filterPkg }
-                    ?.appLabel ?: "전체"
+
+            value = "${month}월 목표 성공일: 총 ${successDays}일!"
+        }
+
+        addSource(calendarDecoratorData) { updateText() }
+        addSource(_selectedFilter) { updateText() }
+        addSource(selectedMonth) { updateText() }   // 🔹 새로 추가
+    }
+
+    // 🔹 전체보기(필터 없음)일 때, 선택된 앱들의 총 사용시간 / 전체 목표시간으로 스트릭 계산
+    private fun calculateOverallStreak(): Int {
+        val dailies = dailyUsageList.value ?: return 0
+        val tracked = trackedPackages.value ?: emptySet()
+
+        // 전체 목표시간: 설정값 우선, 없으면 추적 앱들의 개별 목표 합
+        val appList = appUsageList.value ?: emptyList()
+        val trackedApps = if (tracked.isEmpty()) {
+            emptyList<AppUsage>()
+        } else {
+            appList.filter { it.packageName in tracked }
+        }
+
+        val autoGoal = trackedApps.sumOf { it.goalTime }
+        val goal = overallGoalMinutes.value ?: autoGoal
+        if (goal <= 0) return 0
+
+        // 날짜 내림차순 (가장 최근 날짜부터)
+        val sortedDays = dailies.sortedByDescending { it.date }
+
+        var wasSuccess: Boolean? = null
+        var streakCount = 0
+
+        for (day in sortedDays) {
+            // 이 날짜의 "선택된 앱들" 총 사용시간
+            val dayUsage = day.appUsages
+                .filterKeys { pkg -> tracked.isEmpty() || pkg in tracked }
+                .values
+                .sum()
+
+            val success = dayUsage <= goal
+
+            if (wasSuccess == null) {
+                wasSuccess = success
             }
 
-            value = "이번달 $filterName 목표 성공일: 총 ${successDays}일!"
+            if (success == wasSuccess) {
+                streakCount++
+            } else {
+                break
+            }
         }
+
+        if (wasSuccess == null) return 0
+        return if (wasSuccess == true) streakCount else -streakCount
     }
 
     val streakText: LiveData<String> = MediatorLiveData<String>().apply {
@@ -230,35 +368,56 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
             val filterPkg = _selectedFilter.value
             val appList = appUsageList.value ?: return
 
+            // 🔍 streak 가져오기
             val streak = if (filterPkg == null) {
-                appList.firstOrNull()?.streak ?: 0
+                // ✅ 전체보기: 선택된 앱들의 총 사용시간/전체 목표 기준으로 계산한 스트릭
+                calculateOverallStreak()
             } else {
+                // ✅ 개별 앱 보기: 해당 앱의 streak 그대로 사용
                 appList.find { it.packageName == filterPkg }?.streak ?: 0
             }
 
+            // 🔍 이름 표시
+            val appName = if (filterPkg == null) {
+                "전체"
+            } else {
+                appList.find { it.packageName == filterPkg }?.appLabel ?: "알 수 없음"
+            }
+
             val days = kotlin.math.abs(streak)
-            val status = if (streak >= 0) "달성" else "실패"
-            value = "${days}일 연속 목표 $status 중!"
+            val emoji = if (streak >= 0) "🔥" else "💀"
+
+            value = "$appName: $emoji$days"
         }
 
         addSource(appUsageList) { updateStreak() }
         addSource(_selectedFilter) { updateStreak() }
+        // 🔹 전체보기 스트릭은 일별 사용량, 추적앱, 전체 목표가 바뀌어도 갱신돼야 함
+        addSource(dailyUsageList) { updateStreak() }
+        addSource(trackedPackages) { updateStreak() }
+        addSource(overallGoalMinutes) { updateStreak() }
     }
 
     val chartData: LiveData<List<Entry>> = MediatorLiveData<List<Entry>>().apply {
         fun updateChart() {
             val dailies = dailyUsageList.value ?: emptyList()
             val filterPkg = _selectedFilter.value
-            val currentMonth = Calendar.getInstance().get(Calendar.MONTH) + 1
+            val tracked = trackedPackages.value ?: emptySet()
+            val month = selectedMonth.value ?: (Calendar.getInstance().get(Calendar.MONTH) + 1)
             val entries = mutableListOf<Entry>()
 
             dailies
-                .filter { it.date.substring(5, 7).toInt() == currentMonth }
+                .filter { it.date.substring(5, 7).toInt() == month }
                 .forEach { daily ->
                     val dayOfMonth = daily.date.substring(8, 10).toFloat()
                     val usage = if (filterPkg == null) {
-                        daily.appUsages.values.sum()
+                        // ✅ 전체보기: 추적앱만 합산
+                        daily.appUsages
+                            .filterKeys { pkg -> tracked.isEmpty() || pkg in tracked }
+                            .values
+                            .sum()
                     } else {
+                        // ✅ 특정 앱 보기
                         daily.appUsages[filterPkg] ?: 0
                     }
                     entries.add(Entry(dayOfMonth, usage.toFloat()))
@@ -268,7 +427,11 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
 
         addSource(dailyUsageList) { updateChart() }
         addSource(_selectedFilter) { updateChart() }
+        addSource(selectedMonth) { updateChart() }
+        addSource(trackedPackages) { updateChart() }   // 🔹 추적앱 변경 반영
     }
+
+
 
     // ----------------------- 데이터 로딩/설정 저장 -----------------------
 
@@ -280,6 +443,8 @@ class SharedViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setGoalTimes(goals: Map<String, Int>) = viewModelScope.launch(Dispatchers.IO) {
         repository.updateGoalTimes(goals)
+        // ✅ goal 변경 반영해서 다시 로딩
+        refreshData()
     }
 
     fun setCalendarFilter(packageName: String?) {

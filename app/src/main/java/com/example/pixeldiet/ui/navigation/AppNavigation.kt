@@ -83,8 +83,14 @@ fun AppNavigation(sharedViewModel: SharedViewModel = viewModel()) {
                     }
                 )
             }
-            composable(BottomNavItem.Calendar.route) { CalendarScreen() }
-            composable(BottomNavItem.Settings.route) { SettingsScreen() }
+            composable(BottomNavItem.Calendar.route) {
+                CalendarScreen(
+                    viewModel = sharedViewModel
+                )
+            }
+            composable(BottomNavItem.Settings.route) {
+                SettingsScreen()
+            }
 
             // 👇 앱 선택 화면 라우트 추가 (바텀탭에는 안 보이는 서브 화면)
             composable("app_selection") {

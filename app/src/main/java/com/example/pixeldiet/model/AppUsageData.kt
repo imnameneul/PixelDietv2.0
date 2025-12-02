@@ -42,7 +42,7 @@ data class CalendarDecoratorData(
 
 // 날짜별 달성/경고/실패 상태
 enum class DayStatus {
-    SUCCESS, // 파랑
+    SUCCESS, // 초록
     WARNING, // 노랑 (70% 초과)
     FAIL     // 빨강
 }

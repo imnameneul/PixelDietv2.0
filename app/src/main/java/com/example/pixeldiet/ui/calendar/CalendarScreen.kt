@@ -16,16 +16,20 @@ import com.example.pixeldiet.ui.common.WrappedMaterialCalendar
 import com.example.pixeldiet.viewmodel.SharedViewModel
 
 @Composable
-fun CalendarScreen(viewModel: SharedViewModel = viewModel()) {
+fun CalendarScreen(viewModel: SharedViewModel) {
 
     val decoratorData by viewModel.calendarDecoratorData.observeAsState(emptyList())
     val statsText by viewModel.calendarStatsText.observeAsState("")
     val streakText by viewModel.streakText.observeAsState("")
     val chartData by viewModel.chartData.observeAsState(emptyList())
+    val goalMinutes by viewModel.calendarGoalTime.observeAsState(0)
 
     // 🔹 캘린더 필터용: 앱 목록 + 추적앱 목록
     val appList by viewModel.appUsageList.observeAsState(emptyList())
     val trackedPackages by viewModel.trackedPackages.observeAsState(emptySet())
+
+    // 🔹 현재 선택된 필터 라벨("전체" / 앱 이름)
+    val selectedFilterLabel by viewModel.selectedFilterText.observeAsState("전체")
 
     LazyColumn(
         modifier = Modifier
@@ -38,6 +42,7 @@ fun CalendarScreen(viewModel: SharedViewModel = viewModel()) {
             FilterSpinner(
                 appList = appList,
                 trackedPackages = trackedPackages,
+                selectedLabel = selectedFilterLabel,   // 🔹 추가
                 onFilterSelected = { pkgOrNull ->
                     viewModel.setCalendarFilter(pkgOrNull)
                 }
@@ -49,7 +54,10 @@ fun CalendarScreen(viewModel: SharedViewModel = viewModel()) {
             Card(elevation = CardDefaults.cardElevation(2.dp)) {
                 WrappedMaterialCalendar(
                     modifier = Modifier.fillMaxWidth(),
-                    decoratorData = decoratorData
+                    decoratorData = decoratorData,
+                    onMonthChanged = { year, month ->
+                        viewModel.setSelectedMonth(year, month)  // 전에 내가 말한 함수
+                    }
                 )
             }
         }
@@ -57,22 +65,22 @@ fun CalendarScreen(viewModel: SharedViewModel = viewModel()) {
         // 3. 안내 문구
         item {
             Text(
-                statsText,
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Center,
-                fontSize = 16.sp,
-                color = MaterialTheme.colorScheme.secondary
-            )
-            Text(
                 streakText,
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center,
                 fontSize = 16.sp,
                 color = MaterialTheme.colorScheme.primary
             )
+            Text(
+                statsText,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+                fontSize = 16.sp,
+                color = MaterialTheme.colorScheme.secondary
+            )
         }
 
-        // 4. 그래프
+// 4. 그래프
         item {
             Card(
                 Modifier
@@ -91,11 +99,15 @@ fun CalendarScreen(viewModel: SharedViewModel = viewModel()) {
 
                     WrappedBarChart(
                         modifier = Modifier.fillMaxSize(),
-                        chartData = chartData
+                        chartData = chartData,
+                        goalLine = goalMinutes
+                            .takeIf { it > 0 }   // 0이면 선 안 그림
+                            ?.toFloat()
                     )
                 }
             }
         }
+
     }
 }
 
@@ -108,7 +120,8 @@ fun CalendarScreen(viewModel: SharedViewModel = viewModel()) {
 fun FilterSpinner(
     appList: List<AppUsage>,
     trackedPackages: Set<String>,
-    onFilterSelected: (String?) -> Unit      // null = 전체
+    selectedLabel: String,                  // 🔹 현재 선택된 라벨
+    onFilterSelected: (String?) -> Unit     // null = 전체
 ) {
     // 🔹 스피너에 보여줄 앱들: 사용자가 선택한 추적앱만
     val trackedApps = remember(appList, trackedPackages) {
@@ -131,14 +144,14 @@ fun FilterSpinner(
     }
 
     var expanded by remember { mutableStateOf(false) }
-    var selectedText by remember { mutableStateOf(options.firstOrNull()?.second ?: "전체") }
 
     ExposedDropdownMenuBox(
         expanded = expanded,
         onExpandedChange = { expanded = !expanded }
     ) {
         OutlinedTextField(
-            value = selectedText,
+            // 🔹 ViewModel에서 온 selectedLabel을 그대로 사용
+            value = selectedLabel,
             onValueChange = {},
             readOnly = true,
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
@@ -154,9 +167,8 @@ fun FilterSpinner(
                 DropdownMenuItem(
                     text = { Text(label) },
                     onClick = {
-                        selectedText = label
                         expanded = false
-                        onFilterSelected(pkg)   // 🔹 null = 전체, 그 외 = packageName
+                        onFilterSelected(pkg)   // 🔹 선택결과는 ViewModel로만 전달
                     }
                 )
             }

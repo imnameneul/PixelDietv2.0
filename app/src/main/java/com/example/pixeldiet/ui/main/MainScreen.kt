@@ -26,13 +26,17 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 @Composable
-fun MainScreen(viewModel: SharedViewModel = viewModel(),
-               onAppSelectionClick: () -> Unit = {}   // ⭐ 추가
+fun MainScreen(
+    viewModel: SharedViewModel,              // ✅ 기본값 제거
+    onAppSelectionClick: () -> Unit          // ✅ 기본값 제거 (항상 넘겨주기)
                ) {
     val appList by viewModel.appUsageList.observeAsState(emptyList())
     val totalUsage by viewModel.totalUsageData.observeAsState(Pair(0, 0))
     val trackedPackages by viewModel.trackedPackages.observeAsState(emptySet())
     var showGoalDialog by remember { mutableStateOf(false) }
+
+    // 🔹 전체 목표시간 (분)도 함께 observe
+    val overallGoal by viewModel.overallGoalMinutes.observeAsState(null)
 
     // ⭐ 실제로 화면에 보여줄 앱 목록 (추적앱만)
     val displayAppList = remember(appList, trackedPackages) {
@@ -107,14 +111,17 @@ fun MainScreen(viewModel: SharedViewModel = viewModel(),
 
     if (showGoalDialog) {
         GoalSettingDialog(
-            appList = displayAppList,     // ⭐ 추적앱 기준으로만 목표 설정
+            appList = displayAppList,     // 추적앱 기준
+            overallGoal = overallGoal,    // 🔹 전체 목표시간 전달
             onDismiss = { showGoalDialog = false },
-            onSave = { newGoals: Map<String, Int> ->
-                viewModel.setGoalTimes(newGoals)
+            onSave = { newGoals: Map<String, Int>, totalGoalMinutes: Int? ->
+                viewModel.setGoalTimes(newGoals)          // 앱별 목표 저장
+                viewModel.setOverallGoal(totalGoalMinutes) // 🔹 전체 목표 저장
                 showGoalDialog = false
             }
         )
     }
+
 }
 
 @Composable
@@ -199,8 +206,9 @@ fun TotalProgress(totalUsage: Int, totalGoal: Int) {
 @Composable
 fun GoalSettingDialog(
     appList: List<AppUsage>,
+    overallGoal: Int?,                          // 🔹 전체 목표시간 (null이면 없음)
     onDismiss: () -> Unit,
-    onSave: (Map<String, Int>) -> Unit    // ✅ key = packageName
+    onSave: (Map<String, Int>, Int?) -> Unit   // 🔹 (앱별 목표, 전체 목표)
 ) {
     // app.packageName -> (시간, 분) 문자열 상태
     val goalStates = remember(appList) {
@@ -212,6 +220,26 @@ fun GoalSettingDialog(
                 put(app.packageName, hours to minutes)
             }
         }
+    }
+
+    // 🔹 전체 목표시간 초기값 (분 단위)
+    val initialTotalMinutes: Int? = overallGoal
+        ?: appList.sumOf { it.goalTime }.takeIf { it > 0 }
+
+    // 🔹 초기값을 시/분으로 분해
+    val initialHours = initialTotalMinutes?.div(60) ?: 0
+    val initialMinutes = initialTotalMinutes?.rem(60) ?: 0
+
+    var totalGoalHoursText by remember(appList, overallGoal) {
+        mutableStateOf(
+            if (initialTotalMinutes != null) initialHours.toString() else ""
+        )
+    }
+
+    var totalGoalMinutesText by remember(appList, overallGoal) {
+        mutableStateOf(
+            if (initialTotalMinutes != null) initialMinutes.toString() else ""
+        )
     }
 
     AlertDialog(
@@ -250,6 +278,44 @@ fun GoalSettingDialog(
                         )
                     }
                 }
+
+                // 🔹 전체 목표시간 입력 블록 추가
+                item {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        "전체 목표시간 (선택사항)",
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = totalGoalHoursText,
+                            onValueChange = { new ->
+                                totalGoalHoursText = new.filter { it.isDigit() }
+                            },
+                            label = { Text("시간") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = totalGoalMinutesText,
+                            onValueChange = { new ->
+                                totalGoalMinutesText = new.filter { it.isDigit() }
+                            },
+                            label = { Text("분") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Text(
+                        text = "둘 다 비워두면 앱별 목표시간 합계를 전체 목표로 사용합니다.",
+                        fontSize = 12.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
             }
         },
         confirmButton = {
@@ -259,7 +325,19 @@ fun GoalSettingDialog(
                     val m = hm.second.toIntOrNull() ?: 0
                     h * 60 + m
                 }
-                onSave(newGoals)
+
+                // 🔹 전체 목표시간 계산
+                val h = totalGoalHoursText.toIntOrNull()
+                val m = totalGoalMinutesText.toIntOrNull()
+
+                val totalGoalMinutes: Int? = if (h == null && m == null) {
+                    // 둘 다 비어 있으면 → null (SharedViewModel에서 자동 합산)
+                    null
+                } else {
+                    (h ?: 0) * 60 + (m ?: 0)
+                }
+
+                onSave(newGoals, totalGoalMinutes)
             }) {
                 Text("저장")
             }

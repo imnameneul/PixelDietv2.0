@@ -66,6 +66,14 @@ class UsageCheckWorker(
         return trackedPrefs.getStringSet("tracked_packages", emptySet()) ?: emptySet()
     }
 
+    // 🔹 SharedViewModel과 동일 prefs에서 전체 목표시간(분) 읽기
+    private fun getOverallGoalMinutes(): Int? {
+        val goalPrefs =
+            context.getSharedPreferences("goal_prefs", Context.MODE_PRIVATE)
+        val saved = goalPrefs.getInt("overall_goal_minutes", -1)
+        return if (saved >= 0) saved else null
+    }
+
     // ---------------- 개별 앱 알림 ----------------
 
     private fun checkIndividualAppAlerts(
@@ -126,8 +134,14 @@ class UsageCheckWorker(
         appList: List<AppUsage>,
         settings: NotificationSettings
     ) {
+        // 🔹 추적 대상 앱들의 총 사용시간(분)
         val totalUsage = appList.sumOf { it.currentUsage }
-        val totalGoal = appList.sumOf { it.goalTime }
+
+        // 🔹 전체 목표시간(분): 설정된 값이 있으면 그걸 사용, 없으면 앱별 목표 합
+        val overallGoal = getOverallGoalMinutes()
+        val autoGoal = appList.sumOf { it.goalTime }
+        val totalGoal = overallGoal ?: autoGoal
+
         if (totalGoal == 0) return
 
         val percentage = (totalUsage.toFloat() / totalGoal) * 100
@@ -170,6 +184,7 @@ class UsageCheckWorker(
             prefs.recordSentToday(type50)
         }
     }
+
 
     private fun formatTime(minutes: Int): String {
         val hours = minutes / 60

@@ -37,8 +37,8 @@ data class InstalledApp(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppSelectionScreen(
-    viewModel: SharedViewModel = viewModel(),
-    onDone: () -> Unit = {}   // 저장 후 돌아갈 때 쓸 콜백 (나중에 NavGraph에 연결하면 됨)
+    viewModel: SharedViewModel,            // ✅ 기본값 제거
+    onDone: () -> Unit                     // ✅ 기본값 제거
 ) {
     val context = LocalContext.current
     val pm = context.packageManager

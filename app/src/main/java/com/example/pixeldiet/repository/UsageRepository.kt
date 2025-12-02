@@ -128,6 +128,23 @@ object UsageRepository {
             dayMap[pkg] = (dayMap[pkg] ?: 0) + usageInMinutes
         }
 
+        // 🔹 오늘 날짜 문자열 (yyyy-MM-dd)
+        val todayKey = sdf.format(Date(startTime))
+
+        // 🔹 오늘 정밀 사용시간(todayUsageMap)을 일별 데이터에 반영
+        if (todayUsageMap.isNotEmpty()) {
+            // 오늘 항목이 이미 dailyUsageMap에 있으면 가져오고, 없으면 새로 만든다
+            val todayDayMap = dailyUsageMap.getOrPut(todayKey) { mutableMapOf() }
+
+            // 오늘 사용 시간은 todayUsageMap 기준으로 덮어쓰기 (더 정밀한 값이니까)
+            todayUsageMap.forEach { (pkg, minutes) ->
+                // 필요하면 기존 값과 비교해서 max/min 선택 가능하지만,
+                // 지금은 "정밀 계산 결과"를 신뢰하도록 덮어쓰기
+                todayDayMap[pkg] = minutes
+            }
+        }
+
+
         val newDailyList = dailyUsageMap.map { (date, usages) ->
             DailyUsage(
                 date = date,
@@ -157,11 +174,25 @@ object UsageRepository {
             val todayUsage = todayUsageMap[pkg] ?: 0
             val goal = currentGoals[pkg] ?: 0
             val pastStreak = streakMap[pkg] ?: 0
-            var finalStreak = pastStreak
+            val finalStreak = if (goal <= 0) {
+                0
+            } else {
+                val todaySuccess = todayUsage <= goal
 
-            // 오늘 목표 초과 시 실패 스트릭 조정
-            if (goal > 0 && todayUsage > goal) {
-                finalStreak = if (pastStreak < 0) pastStreak - 1 else -1
+                when {
+                    pastStreak == 0 -> {
+                        // 어제까지 연속 기록 없음 → 오늘이 첫날
+                        if (todaySuccess) 1 else -1
+                    }
+                    pastStreak > 0 -> {
+                        // 어제까지는 연속 성공 상태
+                        if (todaySuccess) pastStreak + 1 else -1
+                    }
+                    else -> {
+                        // 어제까지는 연속 실패 상태 (pastStreak < 0)
+                        if (todaySuccess) 1 else pastStreak - 1
+                    }
+                }
             }
 
             // 앱 라벨(이름)
